@@ -113,8 +113,15 @@ jobs:
       - name: Test health endpoint
         run: |
           echo "Testing GET /api/health..."
-          RESPONSE=$(curl -s http://127.0.0.1:3001/api/health)
+          HTTP_CODE=$(curl -s -o /tmp/health_response.json -w "%{http_code}" http://127.0.0.1:3001/api/health)
+          RESPONSE=$(cat /tmp/health_response.json)
+          echo "HTTP Status: $HTTP_CODE"
           echo "Response: $RESPONSE"
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Health check failed - HTTP status $HTTP_CODE (expected 200)"
+            exit 1
+          fi
           
           if ! echo "$RESPONSE" | grep -q '"status":"healthy"'; then
             echo "ERROR: Health check failed - status not healthy"
@@ -131,11 +138,19 @@ jobs:
       - name: Test generation endpoint
         run: |
           echo "Testing POST /api/generate..."
-          RESPONSE=$(curl -s -X POST http://127.0.0.1:3001/api/generate \
+          HTTP_CODE=$(curl -s -o /tmp/generate_response.json -w "%{http_code}" -X POST http://127.0.0.1:3001/api/generate \
             -H "Content-Type: application/json" \
             -d '{"prompt":"Create a modern premium burger restaurant landing page with a hero section, menu cards, special offers, testimonials, and contact information."}')
+          RESPONSE=$(cat /tmp/generate_response.json)
           
+          echo "HTTP Status: $HTTP_CODE"
           echo "Response length: ${#RESPONSE} characters"
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Generation failed - HTTP status $HTTP_CODE (expected 200)"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
           
           # Check success
           if ! echo "$RESPONSE" | grep -q '"success":true'; then
@@ -183,24 +198,50 @@ jobs:
       - name: Test production serving
         run: |
           echo "Testing frontend serving..."
-          FRONTEND_RESPONSE=$(curl -s http://127.0.0.1:3001/)
+          FRONTEND_HTTP=$(curl -s -o /tmp/frontend_response.html -w "%{http_code}" http://127.0.0.1:3001/)
+          FRONTEND_RESPONSE=$(cat /tmp/frontend_response.html)
+          
+          echo "HTTP Status: $FRONTEND_HTTP"
+          
+          if [ "$FRONTEND_HTTP" != "200" ]; then
+            echo "ERROR: Frontend not served correctly - HTTP status $FRONTEND_HTTP (expected 200)"
+            exit 1
+          fi
           
           if ! echo "$FRONTEND_RESPONSE" | grep -q '<div id="root">'; then
-            echo "ERROR: Frontend not served correctly"
+            echo "ERROR: Frontend not served correctly - missing root div"
             exit 1
           fi
           
           echo "Testing API still works..."
-          HEALTH_RESPONSE=$(curl -s http://127.0.0.1:3001/api/health)
+          HEALTH_HTTP=$(curl -s -o /tmp/health_prod.json -w "%{http_code}" http://127.0.0.1:3001/api/health)
+          HEALTH_RESPONSE=$(cat /tmp/health_prod.json)
+          
+          echo "HTTP Status: $HEALTH_HTTP"
+          
+          if [ "$HEALTH_HTTP" != "200" ]; then
+            echo "ERROR: API not working in production mode - HTTP status $HEALTH_HTTP (expected 200)"
+            exit 1
+          fi
+          
           if ! echo "$HEALTH_RESPONSE" | grep -q '"status":"healthy"'; then
-            echo "ERROR: API not working in production mode"
+            echo "ERROR: API not working in production mode - status not healthy"
             exit 1
           fi
           
           echo "Testing SPA fallback..."
-          SPA_RESPONSE=$(curl -s http://127.0.0.1:3001/test-route)
+          SPA_HTTP=$(curl -s -o /tmp/spa_response.html -w "%{http_code}" http://127.0.0.1:3001/test-route)
+          SPA_RESPONSE=$(cat /tmp/spa_response.html)
+          
+          echo "HTTP Status: $SPA_HTTP"
+          
+          if [ "$SPA_HTTP" != "200" ]; then
+            echo "ERROR: SPA fallback not working - HTTP status $SPA_HTTP (expected 200)"
+            exit 1
+          fi
+          
           if ! echo "$SPA_RESPONSE" | grep -q '<div id="root">'; then
-            echo "ERROR: SPA fallback not working"
+            echo "ERROR: SPA fallback not working - missing root div"
             exit 1
           fi
           
