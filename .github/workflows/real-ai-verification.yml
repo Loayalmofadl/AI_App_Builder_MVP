@@ -1,0 +1,312 @@
+name: Real AI Verification (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'OpenAI model to use'
+        required: false
+        default: 'gpt-4o-mini'
+        type: string
+
+jobs:
+  verify-real-ai:
+    name: Real AI Generation Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Start server with real AI configuration
+        env:
+          DEMO_MODE: false
+          AI_BASE_URL: https://api.openai.com/v1
+          AI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AI_MODEL: ${{ github.event.inputs.model || 'gpt-4o-mini' }}
+          PORT: 3001
+        run: |
+          # Start server in background
+          npx tsx server/index.ts > server.log 2>&1 &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          
+          # Wait for server to be ready
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -f http://127.0.0.1:3001/api/health > /dev/null 2>&1; then
+              echo "✓ Server is ready"
+              exit 0
+            fi
+            echo "Attempt $i: Server not ready yet..."
+            sleep 1
+          done
+          
+          echo "✗ Server failed to start within 30 seconds"
+          echo "Server logs:"
+          cat server.log
+          kill $SERVER_PID 2>/dev/null || true
+          exit 1
+
+      - name: Verify health endpoint
+        run: |
+          HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" http://127.0.0.1:3001/api/health)
+          RESPONSE=$(cat /tmp/health.json)
+          
+          echo "Health check HTTP status: $HTTP_CODE"
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "✗ Health check failed"
+            exit 1
+          fi
+          
+          if ! echo "$RESPONSE" | grep -q '"status":"healthy"'; then
+            echo "✗ Health status not healthy"
+            exit 1
+          fi
+          
+          if ! echo "$RESPONSE" | grep -q '"mode":"production"'; then
+            echo "✗ Mode is not production (real AI mode)"
+            exit 1
+          fi
+          
+          echo "✓ Health endpoint verified"
+
+      - name: Execute real AI generation test
+        id: generate
+        run: |
+          PROMPT='Build a modern premium coffee shop website called Black Bean Coffee. Use a dark elegant design, coffee menu with realistic prices, testimonials, about section, and contact section. The content must be specific to Black Bean Coffee and must not use demo burger content.'
+          
+          echo "Sending real AI generation request..."
+          echo "Prompt: $PROMPT"
+          
+          HTTP_CODE=$(curl -s -o /tmp/generate_response.json -w "%{http_code}" \
+            -X POST http://127.0.0.1:3001/api/generate \
+            -H "Content-Type: application/json" \
+            -d "{\"prompt\": \"$PROMPT\"}")
+          
+          RESPONSE=$(cat /tmp/generate_response.json)
+          
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response length: ${#RESPONSE} characters"
+          
+          # Save results for summary
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "response_length=${#RESPONSE}" >> $GITHUB_OUTPUT
+          
+          # Check HTTP status
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "✗ HTTP status is not 200"
+            echo "Response preview: ${RESPONSE:0:500}"
+            echo "success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check success field
+          if ! echo "$RESPONSE" | grep -q '"success":true'; then
+            echo "✗ Response success is not true"
+            echo "success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "success=true" >> $GITHUB_OUTPUT
+          
+          # Check project exists
+          if ! echo "$RESPONSE" | grep -q '"project":{'; then
+            echo "✗ Project not found in response"
+            echo "project_exists=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "project_exists=true" >> $GITHUB_OUTPUT
+          
+          # Check files exist
+          if ! echo "$RESPONSE" | grep -q '"files":\['; then
+            echo "✗ Files array not found"
+            echo "files_exist=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "files_exist=true" >> $GITHUB_OUTPUT
+          
+          # Check expected files
+          for file in "index.html" "styles.css" "app.js"; do
+            if ! echo "$RESPONSE" | grep -q "\"path\":\"$file\""; then
+              echo "✗ File $file not found"
+              echo "expected_files=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          done
+          
+          echo "expected_files=true" >> $GITHUB_OUTPUT
+          
+          # Extract HTML content for content checks
+          HTML_CONTENT=$(echo "$RESPONSE" | grep -o '"path":"index.html"[^}]*"content":"[^"]*"' | sed 's/.*"content":"\(.*\)"/\1/' | head -1)
+          
+          # Check for Black Bean Coffee (prompt-specific content)
+          if echo "$HTML_CONTENT" | grep -qi "Black Bean Coffee"; then
+            echo "✓ Generated content contains 'Black Bean Coffee'"
+            echo "prompt_specific=true" >> $GITHUB_OUTPUT
+          else
+            echo "✗ Generated content does NOT contain 'Black Bean Coffee'"
+            echo "prompt_specific=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check that demo content is NOT present
+          if echo "$HTML_CONTENT" | grep -qi "Ember & Oak"; then
+            echo "✗ Generated content contains demo content 'Ember & Oak'"
+            echo "no_demo_content=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "✓ Generated content does NOT contain demo content"
+            echo "no_demo_content=true" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check that burger content is NOT present
+          if echo "$HTML_CONTENT" | grep -qi "burger"; then
+            echo "✗ Generated content contains burger-related content"
+            echo "no_demo_content=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "✓ Generated content does NOT contain burger content"
+          fi
+          
+          # Security check: verify API key is not in response
+          if echo "$RESPONSE" | grep -q "${{ secrets.OPENAI_API_KEY }}"; then
+            echo "✗ CRITICAL: API key found in response!"
+            echo "api_key_exposed=true" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "✓ API key not exposed in response"
+            echo "api_key_exposed=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check server logs for API key exposure
+          if grep -q "${{ secrets.OPENAI_API_KEY }}" server.log; then
+            echo "✗ CRITICAL: API key found in server logs!"
+            echo "api_key_in_logs=true" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "✓ API key not exposed in server logs"
+            echo "api_key_in_logs=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "✓ Real AI generation test passed"
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## Real AI Verification Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Provider:** OpenAI" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** Real AI (DEMO_MODE=false)" >> $GITHUB_STEP_SUMMARY
+          echo "**Model:** ${{ github.event.inputs.model || 'gpt-4o-mini' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Determine overall status
+          if [ "${{ steps.generate.outputs.success }}" == "true" ]; then
+            echo "### ✅ REAL AI VERIFICATION: PASS" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ REAL AI VERIFICATION: FAIL" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # HTTP 200
+          if [ "${{ steps.generate.outputs.http_code }}" == "200" ]; then
+            echo "| HTTP 200 | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| HTTP 200 | ❌ FAIL (got ${{ steps.generate.outputs.http_code }}) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Success field
+          if [ "${{ steps.generate.outputs.success }}" == "true" ]; then
+            echo "| Generated project | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Generated project | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Project exists
+          if [ "${{ steps.generate.outputs.project_exists }}" == "true" ]; then
+            echo "| Project structure | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Project structure | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Files exist
+          if [ "${{ steps.generate.outputs.files_exist }}" == "true" ]; then
+            echo "| Files array | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Files array | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Expected files
+          if [ "${{ steps.generate.outputs.expected_files }}" == "true" ]; then
+            echo "| Expected files (index.html, styles.css, app.js) | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Expected files | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Prompt-specific content
+          if [ "${{ steps.generate.outputs.prompt_specific }}" == "true" ]; then
+            echo "| Prompt-specific generation (Black Bean Coffee) | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Prompt-specific generation | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # No demo content
+          if [ "${{ steps.generate.outputs.no_demo_content }}" == "true" ]; then
+            echo "| No demo content (Ember & Oak) | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| No demo content | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # API key not exposed
+          if [ "${{ steps.generate.outputs.api_key_exposed }}" == "false" ]; then
+            echo "| API key not in response | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| API key not in response | ❌ FAIL (CRITICAL) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # API key not in logs
+          if [ "${{ steps.generate.outputs.api_key_in_logs }}" == "false" ]; then
+            echo "| API key not in logs | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| API key not in logs | ❌ FAIL (CRITICAL) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Response length:** ${{ steps.generate.outputs.response_length }} characters" >> $GITHUB_STEP_SUMMARY
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -n "$SERVER_PID" ]; then
+            echo "Stopping server (PID: $SERVER_PID)..."
+            kill $SERVER_PID 2>/dev/null || true
+            sleep 2
+            kill -9 $SERVER_PID 2>/dev/null || true
+            
+            # Show last few lines of server log for debugging
+            echo ""
+            echo "=== Server log (last 20 lines) ==="
+            tail -20 server.log
+          fi
