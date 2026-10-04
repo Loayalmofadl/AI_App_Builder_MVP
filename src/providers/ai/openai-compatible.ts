@@ -23,42 +23,47 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   async generateProject(prompt: string): Promise<ProjectGeneration> {
-    const systemPrompt = `You are an expert web developer. Generate a complete static website based on the user's description.
+    const systemPrompt = `You are an expert web developer. Generate a complete static website based SPECIFICALLY on the user's description.
+
+CRITICAL: The content, design, and structure must be tailored to the user's specific request. Do NOT use generic templates or sample content. Create something unique based on what they asked for.
 
 You MUST respond with ONLY a valid JSON object in this exact format:
 {
-  "projectName": "A descriptive name for the project",
+  "projectName": "A descriptive name for the project based on the user's request",
   "files": [
     {
       "path": "index.html",
       "language": "html",
-      "content": "<full HTML content here>"
+      "content": "<complete HTML document>"
     },
     {
       "path": "styles.css",
       "language": "css",
-      "content": "/* full CSS content here */"
+      "content": "/* complete CSS styles */"
     },
     {
       "path": "app.js",
       "language": "javascript",
-      "content": "// full JavaScript content here"
+      "content": "// complete JavaScript code"
     }
   ]
 }
 
-Rules:
+Requirements:
+- Create content SPECIFIC to the user's request (business name, products, services, etc.)
 - The HTML must be a complete, valid HTML5 document
 - Link to styles.css and app.js from the HTML
 - Make it responsive and visually polished
 - Use semantic HTML and accessible controls
-- Include real, useful content (not placeholder text)
+- Include real, useful content (not placeholder text like "Lorem ipsum")
 - Do not use external dependencies, CDNs, or frameworks
 - Do not use external fonts or images that might break
 - Make it look like a real professional website
 - The CSS should be modern and well-structured
 - The JavaScript should add interactivity (smooth scroll, animations, etc.)
-- Return ONLY the JSON object, no markdown, no explanation`;
+- Return ONLY the JSON object, no markdown, no explanation
+
+IMPORTANT: Generate content that is unique and specific to what the user requested. If they ask for a coffee shop, create coffee shop content. If they ask for a portfolio, create portfolio content. Do not use the same template for every request.`;
 
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -176,7 +181,7 @@ Rules:
       }
 
       throw new GenerationError(
-        'malformed_response',
+        'validation_failure',
         'Could not parse JSON from AI response',
         'The AI response was not in the expected format. Please try again.'
       );
