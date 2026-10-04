@@ -77,7 +77,11 @@ describe('POST /api/generate', () => {
     
     // Ensure no environment variables are leaked
     expect(responseText).not.toContain('AI_API_KEY');
-    expect(responseText).not.toContain(process.env.AI_API_KEY || '');
+    
+    if (process.env.AI_API_KEY) {
+      expect(responseText).not.toContain(process.env.AI_API_KEY);
+    }
+    
     expect(responseText).not.toContain('sk-');
   });
 
