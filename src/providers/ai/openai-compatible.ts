@@ -181,7 +181,7 @@ IMPORTANT: Generate content that is unique and specific to what the user request
       }
 
       throw new GenerationError(
-        'malformed_response',
+        'validation_failure',
         'Could not parse JSON from AI response',
         'The AI response was not in the expected format. Please try again.'
       );
