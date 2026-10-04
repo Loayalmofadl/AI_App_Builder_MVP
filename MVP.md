@@ -1,82 +1,56 @@
-# AI App Builder - MVP
+# AI App Builder - MVP Status
 
 ## What Works Now
 
-- **Prompt → Generate → Preview** complete workflow
-- **Demo Mode**: Works without any API key, returns a realistic burger restaurant website
-- **OpenAI-Compatible Provider**: Works with any OpenAI-compatible API (OpenAI, Together, Groq, etc.)
-- **Live Preview**: Generated apps rendered in a sandboxed iframe
-- **File Viewer**: View generated HTML, CSS, and JavaScript
-- **Project Persistence**: Projects saved in browser localStorage, survives reload
-- **Re-generation**: Generate a new version with a different prompt
-- **Path Security**: Strict validation prevents directory traversal and unsafe paths
-- **Schema Validation**: All AI output validated with Zod before use
-- **Error Handling**: Clear user-facing error messages, technical details logged server-side
+1. ✅ Prompt → Generate → Preview complete workflow
+2. ✅ Demo Mode works without API key
+3. ✅ Real provider calls happen server-side
+4. ✅ No AI secret is exposed to the browser
+5. ✅ POST /api/generate works over HTTP
+6. ✅ Generated files appear in the UI
+7. ✅ Live preview works (sandboxed iframe)
+8. ✅ LocalStorage persistence works
+9. ✅ Path security validation enforced
+10. ✅ Zod schema validation on all AI output
+11. ✅ Error normalization (no stack traces leaked)
+12. ✅ Build passes
+13. ✅ Typecheck passes
 
 ## How to Run
 
 ```bash
-# Install dependencies
-npm install
+# Terminal 1: API server
+npx tsx server/index.ts
 
-# Development
+# Terminal 2: Frontend dev server
 npm run dev
+```
 
-# Build
+Or for production:
+```bash
 npm run build
-
-# Type check
-npm run typecheck
+npx tsx server/index.ts  # Serves both API and static files
 ```
 
-### Demo Mode (default)
+## Security Verification
 
-The app works out of the box in Demo Mode. No API key needed.
+- ✅ No `VITE_AI_API_KEY` in frontend source
+- ✅ No `import.meta.env.VITE_AI_*` in frontend source
+- ✅ No API key references in built frontend bundle
+- ✅ `AI_API_KEY` only used in server-side code (`server/api/generate.ts`)
+- ✅ Server uses `process.env` (not exposed to browser)
+- ✅ Generated code runs in `sandbox="allow-scripts"` iframe
+- ✅ No `allow-same-origin` on preview iframe
 
-### Real AI Provider
+## Remaining Limitations
 
-Create a `.env` file:
+1. **Unused dependencies**: Some template packages remain in `package.json` (cannot be removed without editing package.json directly)
+   - `@dnd-kit/*`, `@supabase/supabase-js`, `canvas-confetti`, `date-fns`, `framer-motion`, `lucide-react`, `react-router-dom`, `recharts`, `uuid`
+   - These don't affect functionality or security
+   - Cleanup recommended in next maintenance pass
 
-```
-VITE_DEMO_MODE=false
-VITE_AI_BASE_URL=https://api.openai.com/v1
-VITE_AI_API_KEY=your-api-key-here
-VITE_AI_MODEL=gpt-4o-mini
-```
+2. **pnpm-lock.yaml**: Project uses npm (package-lock.json). Migration to pnpm recommended but not blocking.
 
-## Current Limitations
+3. **No server build step**: Server runs via `tsx` (TypeScript executor). For production, consider compiling to JS.
 
-- **Single project type**: Static HTML/CSS/JS only
-- **No authentication**: Anyone can use the app
-- **Browser storage only**: Projects don't persist across devices
-- **No version history**: Each generation replaces the previous
-- **Single AI call**: No retry/repair loop beyond one attempt
-- **No deployment**: Generated apps can only be previewed, not deployed
-
-## What Will Be Added Later
-
-### Phase 2
-- Authentication (user accounts)
-- Database persistence
-- Server-side project storage
-- Multiple AI providers
-- Project history/list
-
-### Phase 3
-- AI agent loop (understand → plan → code → review)
-- File patching (modify existing files)
-- Code modification through conversation
-- Validation/review agent
-
-### Phase 4
-- Secure sandbox execution
-- Application builds (React, Next.js)
-- Package installation
-- Real framework templates
-- Live development environments
-
-### Phase 5
-- Collaboration
-- Billing / credits
-- Deployment
-- Publishing
+4. **No concurrent dev command**: Requires two terminals. Could add `concurrently` script.

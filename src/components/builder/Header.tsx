@@ -1,8 +1,4 @@
-interface HeaderProps {
-  isDemoMode: boolean;
-}
-
-export function Header({ isDemoMode }: HeaderProps) {
+export function Header() {
   return (
     <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm px-6 py-3 flex items-center justify-between">
       <div className="flex items-center gap-3">
@@ -16,11 +12,6 @@ export function Header({ isDemoMode }: HeaderProps) {
       </div>
       
       <div className="flex items-center gap-3">
-        {isDemoMode && (
-          <span className="text-xs bg-amber-500/20 text-amber-300 px-2.5 py-1 rounded-full font-medium">
-            Demo Mode
-          </span>
-        )}
         <span className="text-xs text-gray-500">v1.0 MVP</span>
       </div>
     </header>
