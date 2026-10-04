@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { Project, GenerationState } from './core/contracts/types';
-import { createProvider, getProviderConfig } from './providers/ai';
-import { GenerateProjectService } from './services/generate-project';
+import { GenerationError } from './core/contracts/types';
+import { generateProject } from './services/api-client';
 import { LocalStorageProjectStore } from './storage/local-storage-project-store';
 import { PromptPanel } from './components/builder/PromptPanel';
 import { FilePanel } from './components/files/FilePanel';
@@ -30,10 +30,7 @@ export default function App() {
     setError(null);
 
     try {
-      const config = getProviderConfig();
-      const provider = createProvider(config);
-      const service = new GenerateProjectService(provider);
-      const newProject = await service.generate(prompt);
+      const newProject = await generateProject(prompt);
 
       setProject(newProject);
       setState('success');
@@ -41,12 +38,12 @@ export default function App() {
       store.save(newProject);
       store.setCurrentId(newProject.id);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'An unexpected error occurred';
-      // Check if it's a GenerationError with userMessage
-      if (err && typeof err === 'object' && 'userMessage' in err) {
-        setError((err as any).userMessage);
+      if (err instanceof GenerationError) {
+        setError(err.userMessage);
+      } else if (err instanceof Error) {
+        setError(err.message);
       } else {
-        setError(message);
+        setError('An unexpected error occurred. Please try again.');
       }
       setState('error');
     }
@@ -58,7 +55,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
-      <Header isDemoMode={!getProviderConfig()} />
+      <Header />
       
       <main className="flex-1 flex flex-col lg:flex-row gap-0 overflow-hidden">
         {/* Left panel: Prompt + Files */}

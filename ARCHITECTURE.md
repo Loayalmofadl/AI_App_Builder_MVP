@@ -1,83 +1,97 @@
 # Architecture
 
+## System Overview
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Browser (Vite + React)                     │
+│  App.tsx, Header, PromptPanel, FilePanel, PreviewPanel       │
+│  api-client.ts → POST /api/generate                          │
+└────────────────────────┬─────────────────────────────────────┘
+                         │ HTTP
+┌────────────────────────▼─────────────────────────────────────┐
+│                 Express Server (Node.js)                      │
+│  POST /api/generate → validate → GenerateProjectService      │
+│  GET /api/health                                             │
+│  Serves static dist/ in production                           │
+├──────────────────────────────────────────────────────────────┤
+│                    Service Layer                              │
+│              GenerateProjectService                           │
+├──────────┬───────────┬───────────┬───────────────────────────┤
+│ Provider │ Validation│  Preview  │       Storage             │
+│  (AI)    │   (Zod)   │ Composer  │   (ProjectStore)          │
+├──────────┴───────────┴───────────┴───────────────────────────┤
+│                    Core Contracts                             │
+│             Types, Schemas, Errors                            │
+└──────────────────────────────────────────────────────────────┘
+```
+
 ## Module Boundaries
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    UI Layer                          │
-│  App.tsx, Header, PromptPanel, FilePanel, Preview   │
-├─────────────────────────────────────────────────────┤
-│                  Service Layer                       │
-│            GenerateProjectService                    │
-├──────────┬──────────┬───────────┬───────────────────┤
-│ Provider │Validation│  Preview  │     Storage       │
-│  (AI)    │  (Zod)   │ Composer  │  (ProjectStore)   │
-├──────────┴──────────┴───────────┴───────────────────┤
-│                 Core Contracts                       │
-│         Types, Schemas, Errors                       │
-└─────────────────────────────────────────────────────┘
-```
+### Frontend (`src/`)
+- **App.tsx** - Main application component
+- **components/** - UI components (Header, PromptPanel, FilePanel, PreviewPanel)
+- **services/api-client.ts** - HTTP client for server API
+- **core/contracts/** - Shared types and schemas (also used by server)
+- **storage/** - Browser localStorage persistence
+- **preview/** - Iframe preview composer
+- **validation/** - Path security validation
+- **providers/ai/** - AI provider interface + implementations (used by server only)
 
-## Modules
+### Server (`server/`)
+- **index.ts** - Express server entry point
+- **api/generate.ts** - POST /api/generate handler
+- **api/health.ts** - GET /api/health handler
 
-### Core Contracts (`src/core/contracts/`)
-- `types.ts` - Domain types (Project, GeneratedFile, GenerationState, GenerationError)
-- `schemas.ts` - Zod validation schemas for AI output
+### Shared Code (imported by server from `src/`)
+- `src/core/contracts/types.ts` - Domain types
+- `src/core/contracts/schemas.ts` - Zod validation schemas
+- `src/providers/ai/provider.ts` - AIProvider interface
+- `src/providers/ai/demo.ts` - DemoProvider
+- `src/providers/ai/openai-compatible.ts` - OpenAICompatibleProvider
+- `src/services/generate-project.ts` - Generation orchestration
+- `src/validation/paths.ts` - Path security
 
-### Providers (`src/providers/ai/`)
-- `provider.ts` - AIProvider interface
-- `demo.ts` - DemoProvider (deterministic, no API needed)
-- `openai-compatible.ts` - OpenAICompatibleProvider (works with any compatible API)
-- `index.ts` - Provider factory
+## Data Flow
 
-### Services (`src/services/`)
-- `generate-project.ts` - Orchestrates: prompt → AI → validate → project
+1. User enters prompt in browser
+2. Frontend calls `POST /api/generate` with `{ prompt }`
+3. Server validates request with Zod
+4. Server creates appropriate provider (DemoProvider or OpenAICompatibleProvider)
+5. Server calls `GenerateProjectService.generate(prompt)`
+6. Service calls provider, validates output with Zod
+7. Service validates file paths for security
+8. Server returns validated `Project` to browser
+9. Frontend displays files and renders preview in sandboxed iframe
+10. Frontend saves project to localStorage
 
-### Validation (`src/validation/`)
-- `paths.ts` - Path security (reject traversal, absolute paths, null bytes)
+## Security Boundaries
 
-### Preview (`src/preview/`)
-- `compose-preview.ts` - Combines files into single HTML for iframe
-
-### Storage (`src/storage/`)
-- `project-store.ts` - ProjectStore interface
-- `local-storage-project-store.ts` - localStorage implementation
-
-### Components (`src/components/`)
-- `builder/Header.tsx` - App header with demo mode indicator
-- `builder/PromptPanel.tsx` - Prompt input + generate button + status
-- `files/FilePanel.tsx` - File tabs + code viewer
-- `preview/PreviewPanel.tsx` - Sandboxed iframe preview
+- **AI API keys**: Server-side only (`process.env.AI_API_KEY`)
+- **Frontend**: Never receives secrets, only validated project data
+- **Generated code**: Runs in sandboxed iframe (`sandbox="allow-scripts"`)
+- **File paths**: Validated against allowlist (index.html, styles.css, app.js)
+- **Input**: Length-limited, validated with Zod
+- **Errors**: Normalized, no stack traces or internal details exposed
 
 ## Extension Points
 
 ### Adding a new AI provider
 1. Create `src/providers/ai/new-provider.ts` implementing `AIProvider`
-2. Add to factory in `src/providers/ai/index.ts`
-3. No other changes needed
+2. Add to factory in `server/api/generate.ts`
+3. No frontend changes needed
 
-### Adding a new project type (React, Next.js, etc.)
+### Adding a new project type
 1. Extend `FileLanguage` type in contracts
 2. Update `ALLOWED_PATHS` in schemas
 3. Update preview composer for new file types
-4. Update UI file viewer for new languages
 
 ### Replacing localStorage with a database
 1. Implement `ProjectStore` interface with database calls
-2. Swap `LocalStorageProjectStore` for `DatabaseProjectStore`
-3. No UI changes needed
+2. Swap implementation in frontend
+3. No API changes needed
 
 ### Adding authentication
-1. Add auth context/provider
-2. Gate the generate endpoint
+1. Add auth middleware to Express server
+2. Gate the `/api/generate` endpoint
 3. Associate projects with users in storage
-
-## Security
-
-- AI API keys never exposed to client (in production, use server proxy)
-- All AI output validated with Zod before use
-- Path security prevents directory traversal
-- Generated code runs in sandboxed iframe (`sandbox="allow-scripts"`)
-- No `allow-same-origin` on preview iframe
-- User input length-limited (10-5000 chars)
-- File content length-limited (max 500KB per file)

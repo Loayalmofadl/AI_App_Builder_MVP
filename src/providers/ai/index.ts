@@ -5,27 +5,18 @@ import { OpenAICompatibleProvider } from './openai-compatible';
 /**
  * Provider factory.
  * Selects the appropriate AI provider based on configuration.
+ * 
+ * NOTE: This is used by the server-side API.
+ * The frontend does NOT create providers directly.
  */
 export function createProvider(config?: AIProviderConfig): AIProvider {
-  const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true' ||
-    !config?.apiKey ||
-    !config?.baseUrl;
-
-  if (isDemoMode) {
+  if (!config?.apiKey || !config?.baseUrl) {
     return new DemoProvider();
   }
 
   return new OpenAICompatibleProvider(config);
 }
 
-export function getProviderConfig(): AIProviderConfig | undefined {
-  const baseUrl = import.meta.env.VITE_AI_BASE_URL;
-  const apiKey = import.meta.env.VITE_AI_API_KEY;
-  const model = import.meta.env.VITE_AI_MODEL;
-
-  if (!baseUrl || !apiKey) {
-    return undefined;
-  }
-
-  return { baseUrl, apiKey, model };
-}
+export type { AIProvider, AIProviderConfig } from './provider';
+export { DemoProvider } from './demo';
+export { OpenAICompatibleProvider } from './openai-compatible';
