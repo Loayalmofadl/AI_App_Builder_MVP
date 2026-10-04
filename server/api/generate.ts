@@ -54,12 +54,22 @@ export async function generateHandler(req: Request, res: Response): Promise<void
 
 /**
  * Create the appropriate AI provider based on environment configuration.
+ * Fail-closed: if DEMO_MODE=false but credentials are missing, throw an error.
  */
 function createProvider(): AIProvider {
   const isDemoMode = process.env.DEMO_MODE === 'true';
 
-  if (isDemoMode || !process.env.AI_API_KEY || !process.env.AI_BASE_URL) {
+  if (isDemoMode) {
     return new DemoProvider();
+  }
+
+  // Real provider mode - require credentials
+  if (!process.env.AI_API_KEY || !process.env.AI_BASE_URL) {
+    throw new GenerationError(
+      'internal_error',
+      'Server misconfiguration: DEMO_MODE=false but AI_API_KEY or AI_BASE_URL is not set',
+      'AI provider is not configured. Please contact the administrator.'
+    );
   }
 
   return new OpenAICompatibleProvider({
