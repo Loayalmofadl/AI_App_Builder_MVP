@@ -1,0 +1,217 @@
+name: MVP Runtime Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Security checks
+        run: |
+          echo "Checking for secrets in source..."
+          if grep -r "VITE_AI_API_KEY" src/ --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx"; then
+            echo "ERROR: VITE_AI_API_KEY found in frontend source"
+            exit 1
+          fi
+          
+          if grep -r "VITE_AI_BASE_URL" src/ --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx"; then
+            echo "ERROR: VITE_AI_BASE_URL found in frontend source"
+            exit 1
+          fi
+          
+          echo "Checking for secrets in build output..."
+          if grep -r "AI_API_KEY" dist/ --include="*.js" || grep -r "sk-" dist/ --include="*.js"; then
+            echo "ERROR: API key found in build output"
+            exit 1
+          fi
+          
+          echo "Checking for unsafe code patterns..."
+          if grep -r "eval(" src/ --include="*.ts" --include="*.tsx"; then
+            echo "ERROR: eval() found in source"
+            exit 1
+          fi
+          
+          if grep -r "new Function(" src/ --include="*.ts" --include="*.tsx"; then
+            echo "ERROR: new Function() found in source"
+            exit 1
+          fi
+          
+          if grep -r "child_process" src/ --include="*.ts" --include="*.tsx"; then
+            echo "ERROR: child_process found in source"
+            exit 1
+          fi
+          
+          echo "Checking iframe sandbox..."
+          if ! grep -q 'sandbox="allow-scripts"' src/components/preview/PreviewPanel.tsx; then
+            echo "ERROR: iframe sandbox not found"
+            exit 1
+          fi
+          
+          if grep -q 'allow-same-origin' src/components/preview/PreviewPanel.tsx; then
+            echo "ERROR: allow-same-origin found in iframe"
+            exit 1
+          fi
+          
+          echo "Checking .env is ignored..."
+          if ! grep -q "^\.env$" .gitignore; then
+            echo "ERROR: .env not in .gitignore"
+            exit 1
+          fi
+          
+          echo "✓ All security checks passed"
+
+      - name: Start server
+        env:
+          DEMO_MODE: true
+          PORT: 3001
+        run: |
+          npx tsx server/index.ts &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          
+          # Wait for server to be ready
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -f http://127.0.0.1:3001/api/health > /dev/null 2>&1; then
+              echo "Server is ready"
+              exit 0
+            fi
+            echo "Attempt $i: Server not ready yet..."
+            sleep 1
+          done
+          
+          echo "ERROR: Server failed to start within 30 seconds"
+          kill $SERVER_PID 2>/dev/null || true
+          exit 1
+
+      - name: Test health endpoint
+        run: |
+          echo "Testing GET /api/health..."
+          RESPONSE=$(curl -s http://127.0.0.1:3001/api/health)
+          echo "Response: $RESPONSE"
+          
+          if ! echo "$RESPONSE" | grep -q '"status":"healthy"'; then
+            echo "ERROR: Health check failed - status not healthy"
+            exit 1
+          fi
+          
+          if ! echo "$RESPONSE" | grep -q '"mode":"demo"'; then
+            echo "ERROR: Health check failed - mode not demo"
+            exit 1
+          fi
+          
+          echo "✓ Health endpoint test passed"
+
+      - name: Test generation endpoint
+        run: |
+          echo "Testing POST /api/generate..."
+          RESPONSE=$(curl -s -X POST http://127.0.0.1:3001/api/generate \
+            -H "Content-Type: application/json" \
+            -d '{"prompt":"Create a modern premium burger restaurant landing page with a hero section, menu cards, special offers, testimonials, and contact information."}')
+          
+          echo "Response length: ${#RESPONSE} characters"
+          
+          # Check success
+          if ! echo "$RESPONSE" | grep -q '"success":true'; then
+            echo "ERROR: Generation failed - success not true"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          
+          # Check project exists
+          if ! echo "$RESPONSE" | grep -q '"project":{'; then
+            echo "ERROR: Generation failed - project not found"
+            exit 1
+          fi
+          
+          # Check files exist
+          if ! echo "$RESPONSE" | grep -q '"files":\['; then
+            echo "ERROR: Generation failed - files array not found"
+            exit 1
+          fi
+          
+          # Check expected files
+          if ! echo "$RESPONSE" | grep -q '"path":"index.html"'; then
+            echo "ERROR: Generation failed - index.html not found"
+            exit 1
+          fi
+          
+          if ! echo "$RESPONSE" | grep -q '"path":"styles.css"'; then
+            echo "ERROR: Generation failed - styles.css not found"
+            exit 1
+          fi
+          
+          if ! echo "$RESPONSE" | grep -q '"path":"app.js"'; then
+            echo "ERROR: Generation failed - app.js not found"
+            exit 1
+          fi
+          
+          # Check content is non-empty
+          if ! echo "$RESPONSE" | grep -q '"content":"<!DOCTYPE html>'; then
+            echo "ERROR: Generation failed - HTML content empty or invalid"
+            exit 1
+          fi
+          
+          echo "✓ Generation endpoint test passed"
+
+      - name: Test production serving
+        run: |
+          echo "Testing frontend serving..."
+          FRONTEND_RESPONSE=$(curl -s http://127.0.0.1:3001/)
+          
+          if ! echo "$FRONTEND_RESPONSE" | grep -q '<div id="root">'; then
+            echo "ERROR: Frontend not served correctly"
+            exit 1
+          fi
+          
+          echo "Testing API still works..."
+          HEALTH_RESPONSE=$(curl -s http://127.0.0.1:3001/api/health)
+          if ! echo "$HEALTH_RESPONSE" | grep -q '"status":"healthy"'; then
+            echo "ERROR: API not working in production mode"
+            exit 1
+          fi
+          
+          echo "Testing SPA fallback..."
+          SPA_RESPONSE=$(curl -s http://127.0.0.1:3001/test-route)
+          if ! echo "$SPA_RESPONSE" | grep -q '<div id="root">'; then
+            echo "ERROR: SPA fallback not working"
+            exit 1
+          fi
+          
+          echo "✓ Production serving test passed"
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -n "$SERVER_PID" ]; then
+            echo "Stopping server (PID: $SERVER_PID)..."
+            kill $SERVER_PID 2>/dev/null || true
+            sleep 2
+            kill -9 $SERVER_PID 2>/dev/null || true
+          fi
